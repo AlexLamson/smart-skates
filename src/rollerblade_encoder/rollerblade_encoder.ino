@@ -15,36 +15,71 @@ int last_value = 0;
 
 float last_speed = 0;
 
-void loop() {
-  int reading = digitalRead(REED_SENSOR);
-//  Serial.print(reading);
-  long curr_time = millis();
-
-  //if the wheel stays still for a while, you probably aren't moving
-  if(curr_time - last_high_to_low > 1000) {
-    last_speed = 0;
-  }
-
-  //measure time between magnet passes
-  if(reading == LOW && last_value == HIGH) {
-    long time_diff = curr_time - last_high_to_low; //inter-valley duration
-
-    //compute the speed in meters per second
-    float speed = circum/time_diff; //(in m/s) they are both in milli- units, so they cancel each other out
-    last_speed = speed;
+class WheelSpeed {
+  public:
+    WheelSpeed(int);
+    void update();
+    float get_speed();
     
-    last_high_to_low = curr_time;
-  }
+  private:
+    int pin;
+    float speed;
+    unsigned long last_fall;
+    bool hall_last_value;
+
+    void update_speed();
+};
+
+WheelSpeed right_wheel = WheelSpeed(REED_SENSOR);
+
+void loop() {
+  right_wheel.update();
   
-  Serial.print(last_speed );
-
-  last_value = reading;
-
+  Serial.print(right_wheel.get_speed());
 
   Serial.print(" ");
   Serial.print(-0.1);
   Serial.print(" ");
   Serial.println(5);
 //  Serial.println("");
+}
+
+WheelSpeed::WheelSpeed(int pin) {
+  last_fall = 0;
+
+  this->pin = pin;
+  hall_last_value = digitalRead(pin);
+
+  speed = 0;
+}
+
+void WheelSpeed::update() {
+  bool reading = digitalRead(pin);
+  if (reading != hall_last_value) {
+
+    if (reading == LOW) { // falling edge
+      update_speed();
+      last_fall = millis();
+    }
+
+    hall_last_value = reading;
+  }
+  
+}
+
+void WheelSpeed::update_speed() {
+  long time_diff = millis() - last_fall; //inter-valley duration
+  
+  speed = circum/time_diff; //(in m/s) they are both in milli- units, so they cancel each other out
+}
+
+float WheelSpeed::get_speed() {
+  long time_diff = millis() - last_fall; //inter-valley duration
+  
+  if (time_diff > circum / speed) { // the wheel is slowing down since we haven't seen it in a while
+    update_speed();
+  }
+
+  return speed;
 }
 
