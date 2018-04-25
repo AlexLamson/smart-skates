@@ -19,7 +19,7 @@ class WheelSpeed {
   public:
     WheelSpeed(int);
     void update();
-    float get_speed();
+    float get_speed(); // meters per second
     
   private:
     int pin;
@@ -73,7 +73,7 @@ void WheelSpeed::update_speed() {
   speed = circum/time_diff; //(in m/s) they are both in milli- units, so they cancel each other out
 }
 
-float WheelSpeed::get_speed() {
+float WheelSpeed::get_speed() { // returns meters per second
   long time_diff = millis() - last_fall; //inter-valley duration
   
   if (time_diff > circum / speed) { // the wheel is slowing down since we haven't seen it in a while
