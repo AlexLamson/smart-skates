@@ -91,7 +91,8 @@ WheelSpeed right_wheel = WheelSpeed(RIGHT_HALL_SENSOR);
 
 void drawSmoothedPixel(CRGB*, int, int, float, CRGB);
 byte mapBrightness(float);
-void update_avg_speed(float);
+void update_speed_stats(float);
+void myTimerEvent();
 CRGB scaleColor(CRGB, byte);
 
 void setup() {
@@ -153,33 +154,37 @@ void loop() {
       break;
 
       case 3: // speed = brightness
-
-      byte bright = byte(255 * min(1.0, right_wheel.get_speed() / bright_speed)) // later, get the correct aggregate speed
-      FastLED.fill_solid(leds, PIXELCOUNT, scaleColor(color_p2, bright));
-
-      break;
-      
+      {
+        byte bright = byte(255 * _min(1.0f, right_wheel.get_speed() / bright_speed)); // later, get the correct aggregate speed
+        fill_solid(leds, PIXELCOUNT, scaleColor(color_p2, bright));
+  
+        break;
+      }
       case 4: // speed = hue
-
-      byte h = byte(255 * right_wheel.get_speed() / rainbow_speed);
-      h += hue_at_zero;
-      FastLED.fill_solid(leds, PIXELCOUNT, CHSV(h, 255, 255));
-
+      {
+        byte h = byte(255 * right_wheel.get_speed() / rainbow_speed);
+        h += hue_at_zero;
+        fill_solid(leds, PIXELCOUNT, CHSV(h, 255, 255));
+      }
       break;
 
       case 5: // tail lights
 
       FastLED.clear();
-
-      leds[PIXELCOUNT - 1].r = 255; // running light
-
-      if (last_speed - speed > decel_threshold) {
-        const int upto = 2;
-        for (int i = 0; i < upto; i++) {
-          leds[PIXELCOUNT - 2 - i].r = 255;
+      {
+        leds[PIXELCOUNT - 1].r = 255; // running light
+  
+        int curr_speed = right_wheel.get_speed();
+  
+        if (last_speed - curr_speed > decel_threshold) {
+          const int upto = 2;
+          for (int i = 0; i < upto; i++) {
+            leds[PIXELCOUNT - 2 - i].r = 255;
+          }
         }
+  
+        last_speed = curr_speed;
       }
-
       break;
     }
     
@@ -243,7 +248,7 @@ void drawSmoothedPixel(CRGB* leds, int start, int end, float position, CRGB colo
   for (int i = int(position - 1); i <= int(position + 1); i++) {
     if (i < 0 || i < start || i >= end) { continue; }
     
-    float normBrightness = max(0.0, 1.0-float(abs(i - position + 0.5))*2.0/3); // kernel that's 2 pixels wide, requires at most 3 pixels to show
+    float normBrightness = _max(0.0, 1.0-float(abs(i - position + 0.5))*2.0/3); // kernel that's 2 pixels wide, requires at most 3 pixels to show
     byte brightness = 255*(0.5-cos( PI * pow(normBrightness, 1.5) )/2); // power of 1.5 seems to preserve brightness pretty well.
     
     leds[i] = scaleColor(color, brightness);
@@ -350,7 +355,7 @@ void myTimerEvent()
 }
 
 void update_speed_stats(float speed) {
-  max_speed = max(speed, max_speed);
+  max_speed = _max(speed, max_speed);
 
   statistic_ticks++;
   avg_speed = 1.0*(avg_speed*(statistic_ticks-1) + speed)/statistic_ticks;
