@@ -22,10 +22,6 @@ BlynkTimer timer;
 //char pass[] = "internetofthings";
 char ssid[] = "NETGEAR50";
 char pass[] = "magicalfire545";
-//char ssid[] = "Chris iPhone";
-//char pass[] = "doDoubleg";
-//char ssid[] = "Alex V30";
-//char pass[] = "snoopdoge";
 
 
 // variables about physical entities
@@ -44,7 +40,11 @@ byte tickMillis = 20;
 unsigned long lastTickMillis = 0;
 CRGB leds[PIXELCOUNT];
 
-byte pattern = 1; // the current pattern - {fixed light, <next pattern>}
+//~~~~~~~~~~~~~~~~~~~~~~~~~
+// pattern variables
+//~~~~~~~~~~~~~~~~~~~~~~~~~
+
+byte pattern = 1; // the current pattern - {fixed light, fixed rainbow, speed=brightness, speed=hue, tail lights, onground, footstep hue, footstep brightness}
 
 // variables for fixed light speed-dependent pattern
 CRGB color = 0x1144ff;
@@ -53,9 +53,23 @@ float position = 0;
 float inter_light_distance = inter_pixel_distance * PIXELCOUNT / 2; // mm - distance for the logical lights to display
 float logical_light_distance = inter_light_distance / inter_pixel_distance; // what the program uses to draw the lights
 
+// fixed rainbow
+float hue_position = 0;
+float hue_per_meter = 255;
+float hue_per_pixel = inter_pixel_distance * hue_per_meter / 1000;
 
-// variables for the next pattern 
-// there is no next pattern...
+// speed = brightness
+CRGB color_p2 = 0xff0000;
+float bright_speed = 10; // m/s - the speed at which the lights are brightest
+
+// speed = hue
+byte hue_at_zero = 0;
+float rainbow_speed = 10; // speed to go all the way around the hue cycle
+
+// tail lights
+float last_speed = 0;
+float decel_threshold = 0.05; // m/s
+
 
 class WheelSpeed {
   public:
@@ -78,15 +92,10 @@ WheelSpeed right_wheel = WheelSpeed(RIGHT_HALL_SENSOR);
 void drawSmoothedPixel(CRGB*, int, int, float, CRGB);
 byte mapBrightness(float);
 void update_avg_speed(float);
+CRGB scaleColor(CRGB, byte);
 
 void setup() {
   Serial.begin(115200);
-  
-  FastLED.addLeds<NEOPIXEL, NEOP>(leds, PIXELCOUNT);
-  leds[0].b = 255;
-  FastLED.show();
-
-//  delay(5000);
 
   Serial.println("trying to connect to wifi");
   Blynk.begin(auth, ssid, pass);
@@ -109,12 +118,6 @@ void loop() {
   float right_wheel_speed = right_wheel.get_speed();
   update_speed_stats(right_wheel_speed);
 
-//  Serial.print(right_wheel_speed);
-//  Serial.print(" ");
-//  Serial.print(-0.1);
-//  Serial.print(" ");
-//  Serial.println(5);
-
   // draw patterns
   if (millis() >= lastTickMillis + tickMillis) {
     lastTickMillis = millis();
@@ -133,6 +136,50 @@ void loop() {
         drawSmoothedPixel(leds, PIXELINNERCOUNT, PIXELCOUNT, f + PIXELINNERCOUNT, color);
       }
     
+      break;
+
+      case 2: // fixed rainbow
+
+      hue_position += (right_wheel.get_speed() * tickMillis) / inter_pixel_distance;
+      if (hue_position >= 255) { position -= 255; } // can't mod floats
+      
+      for (int i = 0; i < PIXELCOUNT - PIXELINNERCOUNT; i++) {
+        byte h = byte(hue_position + i * hue_per_pixel);
+        if (i < PIXELINNERCOUNT)
+          leds[PIXELINNERCOUNT - i - 1] = CHSV( h, 255, 255 );
+        leds[PIXELINNERCOUNT + i] = CHSV( h, 255, 255 );
+      }
+
+      break;
+
+      case 3: // speed = brightness
+
+      byte bright = byte(255 * min(1.0, right_wheel.get_speed() / bright_speed)) // later, get the correct aggregate speed
+      FastLED.fill_solid(leds, PIXELCOUNT, scaleColor(color_p2, bright));
+
+      break;
+      
+      case 4: // speed = hue
+
+      byte h = byte(255 * right_wheel.get_speed() / rainbow_speed);
+      h += hue_at_zero;
+      FastLED.fill_solid(leds, PIXELCOUNT, CHSV(h, 255, 255));
+
+      break;
+
+      case 5: // tail lights
+
+      FastLED.clear();
+
+      leds[PIXELCOUNT - 1].r = 255; // running light
+
+      if (last_speed - speed > decel_threshold) {
+        const int upto = 2;
+        for (int i = 0; i < upto; i++) {
+          leds[PIXELCOUNT - 2 - i].r = 255;
+        }
+      }
+
       break;
     }
     
@@ -199,8 +246,11 @@ void drawSmoothedPixel(CRGB* leds, int start, int end, float position, CRGB colo
     float normBrightness = max(0.0, 1.0-float(abs(i - position + 0.5))*2.0/3); // kernel that's 2 pixels wide, requires at most 3 pixels to show
     byte brightness = 255*(0.5-cos( PI * pow(normBrightness, 1.5) )/2); // power of 1.5 seems to preserve brightness pretty well.
     
-    leds[i] = CRGB( scale8(color.r, brightness), scale8(color.g, brightness), scale8(color.b, brightness) );
+    leds[i] = scaleColor(color, brightness);
   }
+}
+CRGB scaleColor(CRGB color, byte brightness) {
+  return CRGB( scale8(color.r, brightness), scale8(color.g, brightness), scale8(color.b, brightness) );
 }
 
 // input within [0, 1]
