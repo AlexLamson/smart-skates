@@ -16,12 +16,17 @@ byte tickMillis = 20;
 unsigned long lastTickMillis = 0;
 CRGB leds[PIXELCOUNT];
 
-// variables for speed-dependent pattern
+byte pattern = 0; // the current pattern - {fixed light, <next pattern>}
+
+// variables for fixed light speed-dependent pattern
 CRGB color = 0xdd00ff;
 
 float position = 0;
 float inter_light_distance = inter_pixel_distance * PIXELCOUNT / 2; // mm - distance for the logical lights to display
 float logical_light_distance = inter_light_distance / inter_pixel_distance; // what the program uses to draw the lights
+
+// variables for the next pattern 
+// there is no next pattern...
 
 class WheelSpeed {
   public:
@@ -66,17 +71,25 @@ void loop() {
   // draw patterns
   if (millis() >= lastTickMillis + tickMillis) {
     lastTickMillis = millis();
-    
-    position += (right_wheel.get_speed() * tickMillis) / inter_pixel_distance;
-    if (position >= logical_light_distance) { position -= logical_light_distance; } // can't mod floats
 
-    fill_solid(leds, PIXELCOUNT, 0); // clear the lightstrip
+    switch (pattern) {
+      case 0: // fixed light
+
+      position += (right_wheel.get_speed() * tickMillis) / inter_pixel_distance;
+      if (position >= logical_light_distance) { position -= logical_light_distance; } // can't mod floats
+  
+      FastLED.clear(); // clear both strips
+      
+      // draw lights at intervals
+      for (float f = position - logical_light_distance; f < PIXELCOUNT - PIXELINNERCOUNT + 1; f += logical_light_distance) {
+        drawSmoothedPixel(leds, 0, PIXELINNERCOUNT, PIXELINNERCOUNT - f, color);
+        drawSmoothedPixel(leds, PIXELINNERCOUNT, PIXELCOUNT, f + PIXELINNERCOUNT, color);
+      }
     
-    // draw lights at intervals
-    for (float f = position - logical_light_distance; f < PIXELCOUNT - PIXELINNERCOUNT + 1; f += logical_light_distance) {
-      drawSmoothedPixel(leds, 0, PIXELINNERCOUNT, PIXELINNERCOUNT - f, color);
-      drawSmoothedPixel(leds, PIXELINNERCOUNT, PIXELCOUNT, f + PIXELINNERCOUNT, color);
+      break;
     }
+    
+    
     
     FastLED.show();
   }
