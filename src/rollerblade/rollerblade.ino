@@ -4,7 +4,8 @@
 #define RIGHT_HALL_SENSOR 2
 
 #define NEOP 5
-#define PIXELCOUNT 18
+#define PIXELCOUNT 30
+#define PIXELINNERCOUNT 12
 
 // variables about physical entities
 const float circum = 251.327412; // mm - circumference of wheels
@@ -15,13 +16,12 @@ byte tickMillis = 20;
 unsigned long lastTickMillis = 0;
 CRGB leds[PIXELCOUNT];
 
-// variables for speed - dependent pattern
+// variables for speed-dependent pattern
 CRGB color = 0xdd00ff;
 
 float position = 0;
 float inter_light_distance = inter_pixel_distance * PIXELCOUNT / 2; // mm - distance for the logical lights to display
 float logical_light_distance = inter_light_distance / inter_pixel_distance; // what the program uses to draw the lights
-//float positionIncrementPerTick = 0.01;
 
 class WheelSpeed {
   public:
@@ -41,7 +41,7 @@ class WheelSpeed {
 WheelSpeed right_wheel = WheelSpeed(RIGHT_HALL_SENSOR);
 //WheelSpeed left_wheel = WheelSpeed(LEFT_HALL_SENSOR);
 
-void drawSmoothedPixel(float, CRGB);
+void drawSmoothedPixel(CRGB*, int, int, float, CRGB);
 byte mapBrightness(float);
 
 void setup() {
@@ -73,8 +73,9 @@ void loop() {
     fill_solid(leds, PIXELCOUNT, 0); // clear the lightstrip
     
     // draw lights at intervals
-    for (float f = position - logical_light_distance; f < PIXELCOUNT + 1; f += logical_light_distance) {
-      drawSmoothedPixel(f, color); 
+    for (float f = position - logical_light_distance; f < PIXELCOUNT - PIXELINNERCOUNT + 1; f += logical_light_distance) {
+      drawSmoothedPixel(leds, 0, PIXELINNERCOUNT, PIXELINNERCOUNT - f, color);
+      drawSmoothedPixel(leds, PIXELINNERCOUNT, PIXELCOUNT, f + PIXELINNERCOUNT, color);
     }
     
     FastLED.show();
@@ -124,11 +125,11 @@ float WheelSpeed::get_speed() { // returns meters per second
   return speed;
 }
 
-void drawSmoothedPixel(float position, CRGB color) {
+void drawSmoothedPixel(CRGB* leds, int start, int end, float position, CRGB color) {
   for (int i = int(position - 1); i <= int(position + 1); i++) {
-    if (i < 0 || i >= PIXELCOUNT) { continue; }
+    if (i < 0 || i < start || i >= end) { continue; }
     
-    float normBrightness = max(0, 1.0-float(abs(i - position + 0.5))*2.0/3); // kernel that's 2 pixels wide, requires at most 3 pixels to show
+    float normBrightness = max(0.0, 1.0-float(abs(i - position + 0.5))*2.0/3); // kernel that's 2 pixels wide, requires at most 3 pixels to show
     byte brightness = 255*(0.5-cos( PI * pow(normBrightness, 1.5) )/2); // power of 1.5 seems to preserve brightness pretty well.
     
     leds[i] = CRGB( scale8(color.r, brightness), scale8(color.g, brightness), scale8(color.b, brightness) );
