@@ -60,7 +60,7 @@ float hue_per_pixel = inter_pixel_distance * hue_per_meter / 1000;
 
 // speed = brightness
 CRGB color_p2 = 0xff0000;
-float bright_speed = 10; // m/s - the speed at which the lights are brightest
+float bright_speed = 3; // m/s - the speed at which the lights are brightest
 
 // speed = hue
 byte hue_at_zero = 0;
@@ -97,6 +97,8 @@ CRGB scaleColor(CRGB, byte);
 
 void setup() {
   Serial.begin(115200);
+
+  FastLED.addLeds<NEOPIXEL, NEOP>(leds, PIXELCOUNT);
 
   Serial.println("trying to connect to wifi");
   Blynk.begin(auth, ssid, pass);
