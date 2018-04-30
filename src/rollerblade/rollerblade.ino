@@ -3,18 +3,25 @@
 #include <ESP8266WiFi.h>
 #include <BlynkSimpleEsp8266.h>
 
+// pins used
+#define LEFT_PRESSURE_SENSOR 6
+#define RIGHT_PRESSURE_SENSOR 7
+#define LEFT_HALL_SENSOR 4
+#define RIGHT_HALL_SENSOR 5
+#define LEFT_NEOP 14
+#define RIGHT_NEOP 15
 
-#define RIGHT_HALL_SENSOR 4
+//pressure variables
+boolean left_stepped_on = false;
+boolean right_stepped_on = false;
 
 // neopixel variables
-#define NEOP 14
-#define PIXELCOUNT 30
-#define PIXELINNERCOUNT 12
+#define PIXEL_COUNT 30
+#define PIXEL_INNER_COUNT 12
 
 // for connecting to blynk and temboo
 char auth[] = "128c8d58f05d4913be0a340473683013"; //blynk auth token
 BlynkTimer timer;
-//WiFiClient client; //for temboo
 
 // Your WiFi credentials.
 // Set password to "" for open networks.
@@ -38,7 +45,8 @@ unsigned long statistic_ticks = 0; //number of speeds that have been recorded
 // general variables for updating lights at intervals
 byte tickMillis = 20;
 unsigned long lastTickMillis = 0;
-CRGB leds[PIXELCOUNT];
+CRGB left_leds[PIXEL_COUNT];
+CRGB right_leds[PIXEL_COUNT];
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~
 // pattern variables
@@ -50,7 +58,7 @@ byte pattern = 1; // the current pattern - {fixed light, fixed rainbow, speed=br
 CRGB color = 0x1144ff;
 
 float position = 0;
-float inter_light_distance = inter_pixel_distance * PIXELCOUNT / 2; // mm - distance for the logical lights to display
+float inter_light_distance = inter_pixel_distance * PIXEL_COUNT / 2; // mm - distance for the logical lights to display
 float logical_light_distance = inter_light_distance / inter_pixel_distance; // what the program uses to draw the lights
 
 // fixed rainbow
@@ -64,7 +72,7 @@ float bright_speed = 3; // m/s - the speed at which the lights are brightest
 
 // speed = hue
 byte hue_at_zero = 0;
-float rainbow_speed = 10; // speed to go all the way around the hue cycle
+float rainbow_speed = 5; // speed to go all the way around the hue cycle
 
 // tail lights
 float last_speed = 0;
@@ -86,8 +94,8 @@ class WheelSpeed {
     void update_speed();
 };
 
+WheelSpeed left_wheel = WheelSpeed(LEFT_HALL_SENSOR);
 WheelSpeed right_wheel = WheelSpeed(RIGHT_HALL_SENSOR);
-//WheelSpeed left_wheel = WheelSpeed(LEFT_HALL_SENSOR);
 
 void drawSmoothedPixel(CRGB*, int, int, float, CRGB);
 byte mapBrightness(float);
@@ -98,7 +106,8 @@ CRGB scaleColor(CRGB, byte);
 void setup() {
   Serial.begin(115200);
 
-  FastLED.addLeds<NEOPIXEL, NEOP>(leds, PIXELCOUNT);
+  FastLED.addLeds<NEOPIXEL, LEFT_NEOP>(left_leds, PIXEL_COUNT);
+  FastLED.addLeds<NEOPIXEL, RIGHT_NEOP>(right_leds, PIXEL_COUNT);
 
   Serial.println("trying to connect to wifi");
   Blynk.begin(auth, ssid, pass);
@@ -106,20 +115,31 @@ void setup() {
 
   timer.setInterval(1000L, myTimerEvent);
 
+  // pull up some pins
   pinMode(RIGHT_HALL_SENSOR, INPUT_PULLUP);
+  pinMode(LEFT_HALL_SENSOR, INPUT_PULLUP);
+  pinMode(LEFT_PRESSURE_SENSOR, INPUT_PULLUP);
+  pinMode(RIGHT_PRESSURE_SENSOR, INPUT_PULLUP);
 }
 
 void loop() {
-  // update sensors and things
+  // check the wheel speeds
+  left_wheel.update();
   right_wheel.update();
+
+  // check if the skate is being stepped on
+  left_stepped_on = (digitalRead(LEFT_PRESSURE_SENSOR) == LOW);
+  right_stepped_on = (digitalRead(RIGHT_PRESSURE_SENSOR) == LOW);
 
   // update blynk stuff
   Blynk.run();
   timer.run();
 
   //update some statistics
+  float left_wheel_speed = left_wheel.get_speed();
   float right_wheel_speed = right_wheel.get_speed();
-  update_speed_stats(right_wheel_speed);
+  float avg_speed = (left_wheel_speed + right_wheel_speed)/2.0;
+  update_speed_stats(avg_speed);
 
   // draw patterns
   if (millis() >= lastTickMillis + tickMillis) {
@@ -127,68 +147,101 @@ void loop() {
 
     switch (pattern) {
       case 1: // fixed light
-
-      position += (right_wheel.get_speed() * tickMillis) / inter_pixel_distance;
-      if (position >= logical_light_distance) { position -= logical_light_distance; } // can't mod floats
-  
-      FastLED.clear(); // clear both strips
-      
-      // draw lights at intervals
-      for (float f = position - logical_light_distance; f < PIXELCOUNT - PIXELINNERCOUNT + 1; f += logical_light_distance) {
-        drawSmoothedPixel(leds, 0, PIXELINNERCOUNT, PIXELINNERCOUNT - f, color);
-        drawSmoothedPixel(leds, PIXELINNERCOUNT, PIXELCOUNT, f + PIXELINNERCOUNT, color);
-      }
+      {
+        position += (avg_speed * tickMillis) / inter_pixel_distance;
+        if (position >= logical_light_distance) { position -= logical_light_distance; } // can't mod floats
     
-      break;
+        FastLED.clear(); // clear both strips
+        
+        // draw lights at intervals
+        for (float f = position - logical_light_distance; f < PIXEL_COUNT - PIXEL_INNER_COUNT + 1; f += logical_light_distance) {
+          drawSmoothedPixel(left_leds, 0, PIXEL_INNER_COUNT, PIXEL_INNER_COUNT - f, color);
+          drawSmoothedPixel(left_leds, PIXEL_INNER_COUNT, PIXEL_COUNT, f + PIXEL_INNER_COUNT, color);
+  
+          drawSmoothedPixel(right_leds, 0, PIXEL_INNER_COUNT, PIXEL_INNER_COUNT - f, color);
+          drawSmoothedPixel(right_leds, PIXEL_INNER_COUNT, PIXEL_COUNT, f + PIXEL_INNER_COUNT, color);
+        }
+      
+        break;
+      }
 
       case 2: // fixed rainbow
-
-      hue_position += (right_wheel.get_speed() * tickMillis) / inter_pixel_distance;
-      if (hue_position >= 255) { position -= 255; } // can't mod floats
-      
-      for (int i = 0; i < PIXELCOUNT - PIXELINNERCOUNT; i++) {
-        byte h = byte(hue_position + i * hue_per_pixel);
-        if (i < PIXELINNERCOUNT)
-          leds[PIXELINNERCOUNT - i - 1] = CHSV( h, 255, 255 );
-        leds[PIXELINNERCOUNT + i] = CHSV( h, 255, 255 );
+      {
+        hue_position += (avg_speed * tickMillis) / inter_pixel_distance;
+        if (hue_position >= 255) { position -= 255; } // can't mod floats
+        
+        for (int i = 0; i < PIXEL_COUNT - PIXEL_INNER_COUNT; i++) {
+          byte h = byte(hue_position + i * hue_per_pixel);
+          if (i < PIXEL_INNER_COUNT) {
+            left_leds[PIXEL_INNER_COUNT - i - 1] = CHSV( h, 255, 255 );
+            right_leds[PIXEL_INNER_COUNT - i - 1] = CHSV( h, 255, 255 );
+          }
+          left_leds[PIXEL_INNER_COUNT + i] = CHSV( h, 255, 255 );
+          right_leds[PIXEL_INNER_COUNT + i] = CHSV( h, 255, 255 );
+        }
+        break;
       }
-
-      break;
 
       case 3: // speed = brightness
       {
-        byte bright = byte(255 * _min(1.0f, right_wheel.get_speed() / bright_speed)); // later, get the correct aggregate speed
-        fill_solid(leds, PIXELCOUNT, scaleColor(color_p2, bright));
+        byte left_bright = byte(255 * _min(1.0f, avg_speed / bright_speed)); // later, get the correct aggregate speed
+        byte right_bright = byte(255 * _min(1.0f, avg_speed / bright_speed)); // later, get the correct aggregate speed
+        fill_solid(left_leds, PIXEL_COUNT, scaleColor(color_p2, left_bright));
+        fill_solid(right_leds, PIXEL_COUNT, scaleColor(color_p2, right_bright));
   
         break;
       }
+      
       case 4: // speed = hue
       {
-        byte h = byte(255 * right_wheel.get_speed() / rainbow_speed);
-        h += hue_at_zero;
-        fill_solid(leds, PIXELCOUNT, CHSV(h, 255, 255));
+        byte left_h = byte(255 * left_wheel_speed / rainbow_speed);
+        left_h += hue_at_zero;
+
+        byte right_h = byte(255 * right_wheel_speed / rainbow_speed);
+        right_h += hue_at_zero;
+
+        fill_solid(left_leds, PIXEL_COUNT, CHSV(left_h, 255, 255));
+        fill_solid(right_leds, PIXEL_COUNT, CHSV(right_h, 255, 255));
+        break;
       }
-      break;
 
       case 5: // tail lights
-
-      FastLED.clear();
       {
-        leds[PIXELCOUNT - 1].r = 255; // running light
+        FastLED.clear();
+        left_leds[PIXEL_COUNT - 1].r = 255; // running lights
+        right_leds[PIXEL_COUNT - 1].r = 255; // running light
   
-        int curr_speed = right_wheel.get_speed();
+        int curr_speed = avg_speed;
   
         if (last_speed - curr_speed > decel_threshold) {
           const int upto = 2;
           for (int i = 0; i < upto; i++) {
-            leds[PIXELCOUNT - 2 - i].r = 255;
+            left_leds[PIXEL_COUNT - 2 - i].r = 255;
+            right_leds[PIXEL_COUNT - 2 - i].r = 255;
           }
         }
-  
+
         last_speed = curr_speed;
+        break;
       }
-      break;
-    }
+
+      case 9: // debug
+      {
+        FastLED.clear();
+        byte left_bright = byte(255 * _min(1.0f, left_wheel_speed / bright_speed));
+        byte right_bright = byte(255 * _min(1.0f, right_wheel_speed / bright_speed));
+        
+        byte g = 0;
+        if(left_stepped_on)
+          g = 255;
+
+        byte b = 0;
+
+        fill_solid(left_leds, PIXEL_COUNT, CRGB(left_bright, g, b));
+        fill_solid(right_leds, PIXEL_COUNT, CRGB(right_bright, g, b));
+        break;
+      }
+    } //end of switch case
     
     FastLED.show();
   }
@@ -323,6 +376,9 @@ BLYNK_WRITE(V1) {
     case 8:
       Serial.println("pattern: step=increase brightness");
       break;
+    case 9:
+      Serial.println("pattern: debug: red=speed, green=pressure");
+      break;
     default:
       Serial.println("pattern: Unknown pattern code (defaulting to fixed lights)");
       pattern = 1;
@@ -349,6 +405,9 @@ void myTimerEvent()
   float avg_of_both_skates = (left_speed + right_speed)/2.0;
   Blynk.virtualWrite(V4, avg_of_both_skates);
 
+  Serial.print("left speed: ");
+  Serial.print(left_speed);
+  Serial.print(" ");
   Serial.print("right speed: ");
   Serial.print(right_speed);
   Serial.print(" ");
