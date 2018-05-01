@@ -96,7 +96,7 @@ float rainbow_speed = 5; // speed to go all the way around the hue cycle
 // tail lights
 float last_speed = 0;
 float decel_threshold = 0.01; // should be in m/s2 but it isn't
-int brake_trail_time = 50; // ms - time to leave lights on after stopped slowing down (flickers without this)
+int brake_trail_time = 500; // ms - time to leave lights on after stopped slowing down (flickers without this)
 unsigned long last_brake_time = 0;
 
 // footstep hue
@@ -302,8 +302,8 @@ void loop() {
           right_leds[PIXEL_INNER_COUNT-i].b = 255; // headlight
         }
 
-        left_leds[PIXEL_COUNT - 1].r = 128; // running light
-        right_leds[PIXEL_COUNT - 1].r = 128; // running light
+        left_leds[PIXEL_COUNT - 1].r = 64; // running light
+        right_leds[PIXEL_COUNT - 1].r = 64; // running light
   
         float curr_speed = avg_speed;
 
