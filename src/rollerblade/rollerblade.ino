@@ -3,6 +3,19 @@
 #include <ESP8266WiFi.h>
 #include <BlynkSimpleEsp8266.h>
 
+//to get the absolute time
+#include <time.h>
+const int timezone = -5;
+const int dst = 1;
+
+//temboo stuff
+#include <Temboo.h>
+#include "TembooAccount.h"
+int calls = 1;   // Execution count, so this doesn't run forever
+int maxCalls = 100;   // Maximum number of times the Choreo should be executed
+boolean should_execute_temboo_task = false;
+WiFiClient client;
+
 //makerboard pins
 #define LEFT_PRESSURE_SENSOR 4
 #define RIGHT_PRESSURE_SENSOR 13
@@ -50,7 +63,7 @@ float inter_pixel_distance = 1000.0 / 60; // mm - distance between neopixels
 //statistics variables
 const int SPEED_BUFFER_SIZE = 10*60;
 const int TIME_STOPPED_TIL_DATA_DUMP = 3*1000;
-const int MIN_TIME_TIL_DATA_DUMP = 10*1000; //DEBUG: change back to 30 seconds when done debugging
+const int MIN_TIME_TIL_DATA_DUMP = 30*1000;
 float max_speed = 0;
 float avg_speed = 0; //running average
 float left_speeds[SPEED_BUFFER_SIZE];
@@ -167,8 +180,8 @@ void loop() {
   //update some statistics
   float left_wheel_speed = left_wheel.get_speed();
   float right_wheel_speed = right_wheel.get_speed();
-  float avg_speed = (left_wheel_speed + right_wheel_speed)/2.0;
-  update_speed_stats(avg_speed);
+  float avg_of_both_skates = (left_wheel_speed + right_wheel_speed)/2.0;
+  update_speed_stats(avg_of_both_skates);
 
 //  Serial.print("left speed: ");
 //  Serial.print(left_wheel_speed);
@@ -179,13 +192,20 @@ void loop() {
   Blynk.run();
 //  timer.run();
 
+  // do temboo stuff if needed
+  if(should_execute_temboo_task) {
+    should_execute_temboo_task = false;
+
+    write_to_spreadsheet(String(avg_speed), String(max_speed), String(millis()/1000));
+  }
+
   /*
    * Only dump the data to blynk if:
    * 1. the skates are stopped
    * 2. the skates have been stopped for a little bit of time
    * 3. the data hasn't been dumped for a bit of time
    */
-  if(avg_speed <= 0.01) {
+  if(avg_of_both_skates <= 0.01) {
     if(curr_time-time_last_stopped > TIME_STOPPED_TIL_DATA_DUMP) {
       if(curr_time-time_last_dumped > MIN_TIME_TIL_DATA_DUMP) {
         time_last_dumped = curr_time;
@@ -247,7 +267,7 @@ void loop() {
     switch (pattern) {
       case 1: // fixed light
       {
-        position += (avg_speed * tickMillis) / inter_pixel_distance;
+        position += (avg_of_both_skates * tickMillis) / inter_pixel_distance;
         if (position >= logical_light_distance) { position -= logical_light_distance; } // can't mod floats
         
         FastLED.clear(); // clear both strips
@@ -266,7 +286,7 @@ void loop() {
 
       case 2: // fixed rainbow
       {
-        hue_position -= (avg_speed * tickMillis) * hue_per_meter / 1000;
+        hue_position -= (avg_of_both_skates * tickMillis) * hue_per_meter / 1000;
         if (hue_position >= 255) { position -= 255; } // can't mod floats
         
         for (int i = 0; i < PIXEL_COUNT - PIXEL_INNER_COUNT; i++) {
@@ -318,7 +338,7 @@ void loop() {
         left_leds[PIXEL_COUNT - 1].r = 64; // running light
         right_leds[PIXEL_COUNT - 1].r = 64; // running light
   
-        float curr_speed = avg_speed;
+        float curr_speed = avg_of_both_skates;
 
         Serial.println(last_speed - curr_speed);
         
@@ -504,8 +524,10 @@ BLYNK_WRITE(V0)
   int pinValue = param.asInt();
   boolean button_down = (pinValue == HIGH);
   if(button_down) {
-    Serial.println("Upload stats button pressed");
-//    Serial.println("Uploading stats to spreadsheet");
+//    Serial.println("Upload stats button pressed");
+    Serial.println("Preparing to upload stats to spreadsheet");
+//    write_to_spreadsheet("love", "joy");
+    should_execute_temboo_task = true;
   }
 }
 
@@ -555,6 +577,7 @@ void recordData()
 {
   float left_speed = left_wheel.get_speed();
   float right_speed = right_wheel.get_speed();
+  float avg_of_both_skates = (left_speed + right_speed)/2.0;
 
   left_speeds[speed_index] = left_speed;
   right_speeds[speed_index] = right_speed;
@@ -579,7 +602,7 @@ void recordData()
   Serial.print(right_speed);
   Serial.print(" m/s | ");
   Serial.print("avg: ");
-  Serial.print(avg_speed);
+  Serial.print(avg_of_both_skates);
   Serial.println(" m/s");
 }
 
@@ -598,18 +621,18 @@ void sendDataToBlynk()
   Blynk.virtualWrite(V7, total_steps);
 
   //dump speeds
-  for(int i = 0; i <= speed_index; i++) {
-    float left_speed = left_speeds[i];
-    float right_speed = right_speeds[i];
-    float avg_of_both_skates = (left_speed+right_speed)/2.0;
-    Blynk.virtualWrite(V5, left_speed);
-    Blynk.virtualWrite(V6, right_speed);
-    Blynk.virtualWrite(V4, avg_of_both_skates);
-
-    //clear out the old data
-    left_speeds[i] = 0;
-    right_speeds[i] = 0;
-  }
+//  for(int i = 0; i <= speed_index; i++) {
+//    float left_speed = left_speeds[i];
+//    float right_speed = right_speeds[i];
+//    float avg_of_both_skates = (left_speed+right_speed)/2.0;
+//    Blynk.virtualWrite(V5, left_speed);
+//    Blynk.virtualWrite(V6, right_speed);
+//    Blynk.virtualWrite(V4, avg_of_both_skates);
+//
+//    //clear out the old data
+//    left_speeds[i] = 0;
+//    right_speeds[i] = 0;
+//  }
   speed_index = 0; //reset the index to prepare for the next data dump  
 
   Serial.println("finished data dump");
@@ -632,5 +655,54 @@ void update_speed_stats(float speed) {
 
   statistic_ticks++;
   avg_speed = 1.0*(avg_speed*(statistic_ticks-1) + speed)/statistic_ticks;
+}
+
+void write_to_spreadsheet(String avg_speed_string, String max_speed_string, String time_spent_string) {
+  if (calls <= maxCalls) {
+    calls++;
+//    Serial.println("Running smart skate temboo choreo friend - Run #" + String(calls));
+    Serial.println("APPENDING STATS TO SPREADSHEET");
+    
+    
+    TembooChoreo AppendToSpreadsheetChoreo(client);
+
+    // Invoke the Temboo client
+    AppendToSpreadsheetChoreo.begin();
+
+    // Set Temboo account credentials
+    AppendToSpreadsheetChoreo.setAccountName(TEMBOO_ACCOUNT);
+    AppendToSpreadsheetChoreo.setAppKeyName(TEMBOO_APP_KEY_NAME);
+    AppendToSpreadsheetChoreo.setAppKey(TEMBOO_APP_KEY);
+
+
+    AppendToSpreadsheetChoreo.addInput("RefreshToken", "1/L56ybiyPZP9BG_P6P1eQaV1_LMI1mlCCOlx6o5GJAdo");
+    AppendToSpreadsheetChoreo.addInput("ClientSecret", "nkSiHCtY4uhJw5ElWiZsImWL");
+    
+    time_t now = time(nullptr);
+    String time_string = ctime(&now);
+    time_string.trim();
+
+//    String appended_row = "[[\""+time_string+"\",\""+value_string+"\"]]";
+//    String appended_row = "[[\""+time_string+"\",\""+avg_speed_string+"\",\""+max_speed_string+"\",\""+time_spent_string+"\"]]";
+    String appended_row = "[[\""+avg_speed_string+"\",\""+max_speed_string+"\",\""+time_spent_string+"\"]]";
+    Serial.println(appended_row);
+    AppendToSpreadsheetChoreo.addInput("Values", appended_row);
+    
+    AppendToSpreadsheetChoreo.addInput("ClientID", "243948719335-78difeijcp952a4tu3d20lsrfue5cvu7.apps.googleusercontent.com");
+    AppendToSpreadsheetChoreo.addInput("SpreadsheetID", "1M3QXqTQ0ka-VfH5SVIgdJAq2QSrUy2FLGo-ffGr55G0");
+    
+    // Identify the Choreo to run
+    AppendToSpreadsheetChoreo.setChoreo("/Library/Google/Sheets/AppendValues");
+    
+    // Run the Choreo; when results are available, print them to serial
+    AppendToSpreadsheetChoreo.run();
+    
+    while(AppendToSpreadsheetChoreo.available()) {
+      char c = AppendToSpreadsheetChoreo.read();
+      Serial.print(c);
+    }
+    AppendToSpreadsheetChoreo.close();
+  }
+  Serial.println("");
 }
 
