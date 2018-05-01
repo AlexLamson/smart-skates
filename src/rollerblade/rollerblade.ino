@@ -664,10 +664,12 @@ void sendDataToBlynk()
 }
 
 void update_speed_stats(float speed) {
-  max_speed = _max(speed, max_speed);
-
-  statistic_ticks++;
-  avg_speed = 1.0*(avg_speed*(statistic_ticks-1) + speed)/statistic_ticks;
+  if (speed >= 0.01) {
+    max_speed = _max(speed, max_speed);
+  
+    statistic_ticks++;
+    avg_speed = 1.0*(avg_speed*(statistic_ticks-1) + speed)/statistic_ticks;
+  }
 }
 
 void write_to_spreadsheet(String avg_speed_string, String max_speed_string, String time_spent_string) {
