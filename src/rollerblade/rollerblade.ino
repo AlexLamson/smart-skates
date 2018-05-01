@@ -50,12 +50,14 @@ float inter_pixel_distance = 1000.0 / 60; // mm - distance between neopixels
 //statistics variables
 const int SPEED_BUFFER_SIZE = 10*60;
 const int TIME_STOPPED_TIL_DATA_DUMP = 3*1000;
+const int MIN_TIME_TIL_DATA_DUMP = 10*1000; //DEBUG: change back to 30 seconds when done debugging
 float max_speed = 0;
 float avg_speed = 0; //running average
 float left_speeds[SPEED_BUFFER_SIZE];
 float right_speeds[SPEED_BUFFER_SIZE];
 int speed_index = 0; //index where we are in the speeds array
 unsigned long time_last_stopped = 0;
+unsigned long time_last_dumped = 0;
 unsigned long statistic_ticks = 0; //number of speeds that have been recorded
 unsigned int total_steps = 0;
 
@@ -77,12 +79,14 @@ byte pattern = 1;
 CRGB color = 0x1144ff;
 
 float position = 0;
-float inter_light_distance = inter_pixel_distance * PIXEL_COUNT / 2; // mm - distance for the logical lights to display
+//float inter_light_distance = inter_pixel_distance * PIXEL_COUNT / 2; // mm - distance for the logical lights to display
+float inter_light_distance = 1000; // mm - distance for the logical lights to display
 float logical_light_distance = inter_light_distance / inter_pixel_distance; // what the program uses to draw the lights
 
 // fixed rainbow
 float hue_position = 0;
-float hue_per_meter = 255;
+//float hue_per_meter = 255;
+float hue_per_meter = 64;
 float hue_per_pixel = inter_pixel_distance * hue_per_meter / 1000;
 
 // speed = brightness
@@ -105,8 +109,8 @@ float left_hue = 0;
 float right_hue = 0;
 
 //step = increase brightness
-const byte step_brightness_delta = 50;
-const byte step_brightness_fade_delta = 10;
+const byte step_brightness_delta = 128;
+const byte step_brightness_fade_delta = 2;
 byte left_step_brightness = 0;
 byte right_step_brightness = 0;
 
@@ -175,12 +179,23 @@ void loop() {
   Blynk.run();
 //  timer.run();
 
-//  if(avg_speed <= 0.01) {
-//    time_last_stopped
-//  }
-//  else {
-//    time_last_stopped = curr_time;
-//  }
+  /*
+   * Only dump the data to blynk if:
+   * 1. the skates are stopped
+   * 2. the skates have been stopped for a little bit of time
+   * 3. the data hasn't been dumped for a bit of time
+   */
+  if(avg_speed <= 0.01) {
+    if(curr_time-time_last_stopped > TIME_STOPPED_TIL_DATA_DUMP) {
+      if(curr_time-time_last_dumped > MIN_TIME_TIL_DATA_DUMP) {
+        time_last_dumped = curr_time;
+        sendDataToBlynk();
+      }
+    }
+  }
+  else {
+    time_last_stopped = curr_time;
+  }
 
 
   // detect steps from pressure sensors
@@ -202,8 +217,7 @@ void loop() {
     if(left_stepped_on) {
       total_steps++;
       left_hue = byte(left_hue + hue_delta);
-      left_step_brightness += step_brightness_delta;
-      left_step_brightness = min(255, (int)left_step_brightness);
+      left_step_brightness = min(255, (int)(left_step_brightness+step_brightness_delta));
       Serial.println("left stepped");
     }
   }
@@ -221,8 +235,7 @@ void loop() {
     if(right_stepped_on) {
       total_steps++;
       right_hue = byte(right_hue + hue_delta);
-      right_step_brightness += step_brightness_delta;
-      right_step_brightness = min(255, (int)right_step_brightness);
+      right_step_brightness = min(255, (int)(right_step_brightness+step_brightness_delta));
       Serial.println("right stepped");
     }
   }
@@ -257,7 +270,7 @@ void loop() {
         if (hue_position >= 255) { position -= 255; } // can't mod floats
         
         for (int i = 0; i < PIXEL_COUNT - PIXEL_INNER_COUNT; i++) {
-          byte h = byte(hue_position - i * hue_per_pixel);
+          byte h = byte(hue_position + i * hue_per_pixel);
           if (i < PIXEL_INNER_COUNT) {
             left_leds[PIXEL_INNER_COUNT - i - 1] = CHSV( h, 255, 255 );
             right_leds[PIXEL_INNER_COUNT - i - 1] = CHSV( h, 255, 255 );
@@ -343,14 +356,14 @@ void loop() {
 
       case 8: // step = increase brightness
       {
-        left_step_brightness -= step_brightness_fade_delta;
-        left_step_brightness = max(0, (int)left_step_brightness);
+        left_step_brightness = max(0, (int)(left_step_brightness-step_brightness_fade_delta));
+        right_step_brightness = max(0, (int)(right_step_brightness-step_brightness_fade_delta));
 
-        right_step_brightness -= step_brightness_fade_delta;
-        right_step_brightness = max(0, (int)right_step_brightness);
+        byte adjusted_left_brightness = mapBrightness(((float)left_step_brightness)/255.0);
+        byte adjusted_right_brightness = mapBrightness(((float)right_step_brightness)/255.0);
         
-        fill_solid(left_leds, PIXEL_COUNT, CHSV( 0, 0, left_step_brightness ));
-        fill_solid(right_leds, PIXEL_COUNT, CHSV( 0, 0, left_step_brightness ));
+        fill_solid(left_leds, PIXEL_COUNT, CRGB( 0, 0, adjusted_left_brightness ));
+        fill_solid(right_leds, PIXEL_COUNT, CRGB( 0, 0, adjusted_right_brightness ));
       }
       break;
 
@@ -573,6 +586,8 @@ void recordData()
 //called only when the skate stops moving so we don't interfer with the timing of the patterns
 void sendDataToBlynk()
 {
+  Serial.println("starting data dump");
+  
   //max speed
   Blynk.virtualWrite(V2, max_speed);
 
@@ -585,12 +600,19 @@ void sendDataToBlynk()
   //dump speeds
   for(int i = 0; i <= speed_index; i++) {
     float left_speed = left_speeds[i];
-    float right_speed = left_speeds[i];
+    float right_speed = right_speeds[i];
     float avg_of_both_skates = (left_speed+right_speed)/2.0;
     Blynk.virtualWrite(V5, left_speed);
     Blynk.virtualWrite(V6, right_speed);
     Blynk.virtualWrite(V4, avg_of_both_skates);
+
+    //clear out the old data
+    left_speeds[i] = 0;
+    right_speeds[i] = 0;
   }
+  speed_index = 0; //reset the index to prepare for the next data dump  
+
+  Serial.println("finished data dump");
 
 //  //left speed
 //  float left_speed = left_wheel.get_speed();
