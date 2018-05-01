@@ -197,7 +197,7 @@ void loop() {
   if(should_execute_temboo_task) {
     should_execute_temboo_task = false;
 
-    write_to_spreadsheet(String(avg_speed), String(max_speed), String(millis()/1000));
+    write_to_spreadsheet(String(avg_speed), String(max_speed), String(total_steps), String(millis()/1000));
   }
 
   /*
@@ -672,7 +672,7 @@ void update_speed_stats(float speed) {
   }
 }
 
-void write_to_spreadsheet(String avg_speed_string, String max_speed_string, String time_spent_string) {
+void write_to_spreadsheet(String avg_speed_string, String max_speed_string, String total_steps_string, String time_spent_string) {
   if (calls <= maxCalls) {
     calls++;
 //    Serial.println("Running smart skate temboo choreo friend - Run #" + String(calls));
@@ -699,7 +699,7 @@ void write_to_spreadsheet(String avg_speed_string, String max_speed_string, Stri
 
 //    String appended_row = "[[\""+time_string+"\",\""+value_string+"\"]]";
 //    String appended_row = "[[\""+time_string+"\",\""+avg_speed_string+"\",\""+max_speed_string+"\",\""+time_spent_string+"\"]]";
-    String appended_row = "[[\""+avg_speed_string+"\",\""+max_speed_string+"\",\""+time_spent_string+"\"]]";
+    String appended_row = "[[\""+avg_speed_string+"\",\""+max_speed_string+"\",\""+total_steps_string+"\",\""+time_spend_string+"\"]]";
     Serial.println(appended_row);
     AppendToSpreadsheetChoreo.addInput("Values", appended_row);
     
