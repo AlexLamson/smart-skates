@@ -95,7 +95,7 @@ float rainbow_speed = 5; // speed to go all the way around the hue cycle
 
 // tail lights
 float last_speed = 0;
-float decel_threshold = 0.0005; // m/s
+float decel_threshold = 0.00005; // m/s
 
 // footstep hue
 byte hue_delta = 51; //51->5 distinct colors
@@ -103,7 +103,10 @@ float left_hue = 0;
 float right_hue = 0;
 
 //step = increase brightness
-byte curr_step_brightness = 0;
+const byte step_brightness_delta = 50;
+const byte step_brightness_fade_delta = 10;
+byte left_step_brightness = 0;
+byte right_step_brightness = 0;
 
 class WheelSpeed {
   public:
@@ -197,6 +200,8 @@ void loop() {
     if(left_stepped_on) {
       total_steps++;
       left_hue = byte(left_hue + hue_delta);
+      left_step_brightness += step_brightness_delta;
+      left_step_brightness = min(255, (int)left_step_brightness);
       Serial.println("left stepped");
     }
   }
@@ -214,6 +219,8 @@ void loop() {
     if(right_stepped_on) {
       total_steps++;
       right_hue = byte(right_hue + hue_delta);
+      right_step_brightness += step_brightness_delta;
+      right_step_brightness = min(255, (int)right_step_brightness);
       Serial.println("right stepped");
     }
   }
@@ -239,8 +246,8 @@ void loop() {
           drawSmoothedPixel(right_leds, PIXEL_INNER_COUNT, PIXEL_COUNT, f + PIXEL_INNER_COUNT, color);
         }
       
-      break;
       }
+      break;
 
       case 2: // fixed rainbow
       {
@@ -256,13 +263,13 @@ void loop() {
           left_leds[PIXEL_INNER_COUNT + i] = CHSV( h, 255, 255 );
           right_leds[PIXEL_INNER_COUNT + i] = CHSV( h, 255, 255 );
         }
-      break;
       }
+      break;
 
       case 3: // speed = brightness
       {
-        byte left_bright = byte(255 * _min(1.0f, avg_speed / bright_speed)); // later, get the correct aggregate speed
-        byte right_bright = byte(255 * _min(1.0f, avg_speed / bright_speed)); // later, get the correct aggregate speed
+        byte left_bright = byte(255 * _min(1.0f, left_wheel_speed / bright_speed)); // later, get the correct aggregate speed
+        byte right_bright = byte(255 * _min(1.0f, right_wheel_speed / bright_speed)); // later, get the correct aggregate speed
         fill_solid(left_leds, PIXEL_COUNT, scaleColor(color_p2, left_bright));
         fill_solid(right_leds, PIXEL_COUNT, scaleColor(color_p2, right_bright));
       }
@@ -297,7 +304,9 @@ void loop() {
         right_leds[PIXEL_COUNT - 1].r = 255; // running light
   
         int curr_speed = avg_speed;
-  
+
+        Serial.println(last_speed - curr_speed);
+        
         if (last_speed - curr_speed > decel_threshold) {
           const int upto = 2;
           for (int i = 0; i < upto; i++) {
@@ -312,8 +321,8 @@ void loop() {
 
       case 6: // lights on when pressure
       {
-        byte left_color = 255 * left_stepped_on;
-        byte right_color = 255 * right_stepped_on;
+        byte left_color = 255 * left_stepping_on;
+        byte right_color = 255 * right_stepping_on;
 
         fill_solid(left_leds, PIXEL_COUNT, CRGB(0, 0, left_color));
         fill_solid(right_leds, PIXEL_COUNT, CRGB(0, 0, right_color));
@@ -327,6 +336,19 @@ void loop() {
       }
       break;
 
+      case 8: // step = increase brightness
+      {
+        left_step_brightness -= step_brightness_fade_delta;
+        left_step_brightness = max(0, (int)left_step_brightness);
+
+        right_step_brightness -= step_brightness_fade_delta;
+        right_step_brightness = max(0, (int)right_step_brightness);
+        
+        fill_solid(left_leds, PIXEL_COUNT, CHSV( 0, 0, left_step_brightness ));
+        fill_solid(right_leds, PIXEL_COUNT, CHSV( 0, 0, left_step_brightness ));
+      }
+      break;
+
       case 9: // debug
       {
         FastLED.clear();
@@ -334,11 +356,11 @@ void loop() {
         byte right_bright = byte(255 * _min(1.0f, right_wheel_speed / bright_speed));
         
         byte left_g = 0;
-        if(left_stepped_on)
+        if(left_stepping_on)
           left_g = 255;
 
         byte right_g = 0;
-        if(left_stepped_on)
+        if(right_stepping_on)
           right_g = 255;
 
         byte b = 0;
