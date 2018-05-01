@@ -150,6 +150,7 @@ byte mapBrightness(float);
 void update_speed_stats(float);
 void recordData();
 CRGB scaleColor(CRGB, byte);
+float compute_aggregate_speed(float, float);
 
 void setup() {
   Serial.begin(115200);
@@ -180,8 +181,8 @@ void loop() {
   //update some statistics
   float left_wheel_speed = left_wheel.get_speed();
   float right_wheel_speed = right_wheel.get_speed();
-  float avg_of_both_skates = (left_wheel_speed + right_wheel_speed)/2.0;
-  update_speed_stats(avg_of_both_skates);
+  float aggregate_speed = compute_aggregate_speed(left_wheel_speed, right_wheel_speed);
+  update_speed_stats(aggregate_speed);
 
 //  Serial.print("left speed: ");
 //  Serial.print(left_wheel_speed);
@@ -205,7 +206,7 @@ void loop() {
    * 2. the skates have been stopped for a little bit of time
    * 3. the data hasn't been dumped for a bit of time
    */
-  if(avg_of_both_skates <= 0.01) {
+  if(aggregate_speed <= 0.01) {
     if(curr_time-time_last_stopped > TIME_STOPPED_TIL_DATA_DUMP) {
       if(curr_time-time_last_dumped > MIN_TIME_TIL_DATA_DUMP) {
         time_last_dumped = curr_time;
@@ -267,7 +268,7 @@ void loop() {
     switch (pattern) {
       case 1: // fixed light
       {
-        position += (avg_of_both_skates * tickMillis) / inter_pixel_distance;
+        position += (aggregate_speed * tickMillis) / inter_pixel_distance;
         if (position >= logical_light_distance) { position -= logical_light_distance; } // can't mod floats
         
         FastLED.clear(); // clear both strips
@@ -286,7 +287,7 @@ void loop() {
 
       case 2: // fixed rainbow
       {
-        hue_position -= (avg_of_both_skates * tickMillis) * hue_per_meter / 1000;
+        hue_position -= (aggregate_speed * tickMillis) * hue_per_meter / 1000;
         if (hue_position >= 255) { position -= 255; } // can't mod floats
         
         for (int i = 0; i < PIXEL_COUNT - PIXEL_INNER_COUNT; i++) {
@@ -338,7 +339,7 @@ void loop() {
         left_leds[PIXEL_COUNT - 1].r = 64; // running light
         right_leds[PIXEL_COUNT - 1].r = 64; // running light
   
-        float curr_speed = avg_of_both_skates;
+        float curr_speed = aggregate_speed;
 
         Serial.println(last_speed - curr_speed);
         
@@ -577,7 +578,7 @@ void recordData()
 {
   float left_speed = left_wheel.get_speed();
   float right_speed = right_wheel.get_speed();
-  float avg_of_both_skates = (left_speed + right_speed)/2.0;
+  float aggregate_speed = compute_aggregate_speed(left_speed, right_speed);
 
   left_speeds[speed_index] = left_speed;
   right_speeds[speed_index] = right_speed;
@@ -602,8 +603,20 @@ void recordData()
   Serial.print(right_speed);
   Serial.print(" m/s | ");
   Serial.print("avg: ");
-  Serial.print(avg_of_both_skates);
+  Serial.print(aggregate_speed);
   Serial.println(" m/s");
+}
+
+float compute_aggregate_speed(float left_wheel_speed, float right_wheel_speed) {
+  if (left_stepping_on && right_stepping_on) {
+    aggregate_speed = max(left_wheel_speed, right_wheel_speed);
+  } else if (left_stepping_on) {
+    aggregate_speed = left_wheel_speed;
+  } else if (right_stepping_on) {
+    aggregate_speed = right_wheel_speed;
+  } else { // no feet are on the ground
+    aggregate_speed = (left_wheel_speed + right_wheel_speed) / 2;
+  }
 }
 
 //called only when the skate stops moving so we don't interfer with the timing of the patterns
