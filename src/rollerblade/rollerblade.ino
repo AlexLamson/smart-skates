@@ -95,7 +95,9 @@ float rainbow_speed = 5; // speed to go all the way around the hue cycle
 
 // tail lights
 float last_speed = 0;
-float decel_threshold = 0.00005; // m/s
+float decel_threshold = 0.01; // should be in m/s2 but it isn't
+int brake_trail_time = 50; // ms - time to leave lights on after stopped slowing down (flickers without this)
+unsigned long last_brake_time = 0;
 
 // footstep hue
 byte hue_delta = 51; //51->5 distinct colors
@@ -300,18 +302,21 @@ void loop() {
           right_leds[PIXEL_INNER_COUNT-i].b = 255; // headlight
         }
 
-        left_leds[PIXEL_COUNT - 1].r = 255; // running light
-        right_leds[PIXEL_COUNT - 1].r = 255; // running light
+        left_leds[PIXEL_COUNT - 1].r = 128; // running light
+        right_leds[PIXEL_COUNT - 1].r = 128; // running light
   
-        int curr_speed = avg_speed;
+        float curr_speed = avg_speed;
 
         Serial.println(last_speed - curr_speed);
         
-        if (last_speed - curr_speed > decel_threshold) {
-          const int upto = 2;
+        if (last_speed - curr_speed > decel_threshold || curr_time <= last_brake_time + brake_trail_time) {
+          if (last_speed - curr_speed > decel_threshold) {
+            last_brake_time = curr_time;
+          }
+          const int upto = 3;
           for (int i = 0; i < upto; i++) {
-            left_leds[PIXEL_COUNT - 2 - i].r = 255;
-            right_leds[PIXEL_COUNT - 2 - i].r = 255;
+            left_leds[PIXEL_COUNT - 1 - i].r = 255;
+            right_leds[PIXEL_COUNT - 1 - i].r = 255;
           }
         }
 
