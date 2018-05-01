@@ -17,20 +17,20 @@ boolean should_execute_temboo_task = false;
 WiFiClient client;
 
 //makerboard pins
-#define LEFT_PRESSURE_SENSOR 4
-#define RIGHT_PRESSURE_SENSOR 13
-#define LEFT_HALL_SENSOR 5
-#define RIGHT_HALL_SENSOR 12
-#define LEFT_NEOP 0
-#define RIGHT_NEOP 14
+//#define LEFT_PRESSURE_SENSOR 4
+//#define RIGHT_PRESSURE_SENSOR 13
+//#define LEFT_HALL_SENSOR 5
+//#define RIGHT_HALL_SENSOR 12
+//#define LEFT_NEOP 0
+//#define RIGHT_NEOP 14
 
 //ESP8266 pins
-//#define LEFT_PRESSURE_SENSOR 2
-//#define RIGHT_PRESSURE_SENSOR 14
-//#define LEFT_HALL_SENSOR A0
-//#define RIGHT_HALL_SENSOR 4
-//#define LEFT_NEOP 12
-//#define RIGHT_NEOP 5
+#define LEFT_PRESSURE_SENSOR 2
+#define RIGHT_PRESSURE_SENSOR 14
+#define LEFT_HALL_SENSOR 12
+#define RIGHT_HALL_SENSOR 4
+#define LEFT_NEOP 15
+#define RIGHT_NEOP 5
 
 //pressure variables
 unsigned long left_last_pressure_time = 0;
@@ -608,6 +608,7 @@ void recordData()
 }
 
 float compute_aggregate_speed(float left_wheel_speed, float right_wheel_speed) {
+  float aggregate_speed = 0;
   if (left_stepping_on && right_stepping_on) {
     aggregate_speed = max(left_wheel_speed, right_wheel_speed);
   } else if (left_stepping_on) {
@@ -617,6 +618,7 @@ float compute_aggregate_speed(float left_wheel_speed, float right_wheel_speed) {
   } else { // no feet are on the ground
     aggregate_speed = (left_wheel_speed + right_wheel_speed) / 2;
   }
+  return aggregate_speed;
 }
 
 //called only when the skate stops moving so we don't interfer with the timing of the patterns
@@ -699,7 +701,7 @@ void write_to_spreadsheet(String avg_speed_string, String max_speed_string, Stri
 
 //    String appended_row = "[[\""+time_string+"\",\""+value_string+"\"]]";
 //    String appended_row = "[[\""+time_string+"\",\""+avg_speed_string+"\",\""+max_speed_string+"\",\""+time_spent_string+"\"]]";
-    String appended_row = "[[\""+avg_speed_string+"\",\""+max_speed_string+"\",\""+total_steps_string+"\",\""+time_spend_string+"\"]]";
+    String appended_row = "[[\""+avg_speed_string+"\",\""+max_speed_string+"\",\""+total_steps_string+"\",\""+time_spent_string+"\"]]";
     Serial.println(appended_row);
     AppendToSpreadsheetChoreo.addInput("Values", appended_row);
     
