@@ -3,17 +3,28 @@
 #include <ESP8266WiFi.h>
 #include <BlynkSimpleEsp8266.h>
 
-// pins used
-#define LEFT_PRESSURE_SENSOR 6
-#define RIGHT_PRESSURE_SENSOR 7
-#define LEFT_HALL_SENSOR 4
-#define RIGHT_HALL_SENSOR 5
-#define LEFT_NEOP 14
-#define RIGHT_NEOP 15
+//makerboard pins
+#define LEFT_PRESSURE_SENSOR 4
+#define RIGHT_PRESSURE_SENSOR 13
+#define LEFT_HALL_SENSOR 5
+#define RIGHT_HALL_SENSOR 12
+#define LEFT_NEOP 0
+#define RIGHT_NEOP 14
+
+//ESP8266 pins
+//#define LEFT_PRESSURE_SENSOR 2
+//#define RIGHT_PRESSURE_SENSOR 14
+//#define LEFT_HALL_SENSOR A0
+//#define RIGHT_HALL_SENSOR 4
+//#define LEFT_NEOP 12
+//#define RIGHT_NEOP 5
 
 //pressure variables
-boolean left_stepped_on = false;
-boolean right_stepped_on = false;
+unsigned long left_last_pressure_time = 0;
+unsigned long right_last_pressure_time = 0;
+const int pressure_debounce_time = 50;
+boolean left_stepping_on = false;
+boolean right_stepping_on = false;
 
 // neopixel variables
 #define PIXEL_COUNT 30
@@ -37,10 +48,16 @@ float inter_pixel_distance = 1000.0 / 60; // mm - distance between neopixels
 
 
 //statistics variables
+const int SPEED_BUFFER_SIZE = 10*60;
+const int TIME_STOPPED_TIL_DATA_DUMP = 3*1000;
 float max_speed = 0;
 float avg_speed = 0; //running average
+float left_speeds[SPEED_BUFFER_SIZE];
+float right_speeds[SPEED_BUFFER_SIZE];
+int speed_index = 0; //index where we are in the speeds array
+unsigned long time_last_stopped = 0;
 unsigned long statistic_ticks = 0; //number of speeds that have been recorded
-
+unsigned int total_steps = 0;
 
 // general variables for updating lights at intervals
 byte tickMillis = 20;
@@ -52,7 +69,9 @@ CRGB right_leds[PIXEL_COUNT];
 // pattern variables
 //~~~~~~~~~~~~~~~~~~~~~~~~~
 
-byte pattern = 1; // the current pattern - {fixed light, fixed rainbow, speed=brightness, speed=hue, tail lights, onground, footstep hue, footstep brightness}
+// encodes id of current pattern
+// to view list of IDs, look at BLYNK_WRITE(V1)
+byte pattern = 1;
 
 // variables for fixed light speed-dependent pattern
 CRGB color = 0x1144ff;
@@ -76,8 +95,15 @@ float rainbow_speed = 5; // speed to go all the way around the hue cycle
 
 // tail lights
 float last_speed = 0;
-float decel_threshold = 0.05; // m/s
+float decel_threshold = 0.0005; // m/s
 
+// footstep hue
+byte hue_delta = 51; //51->5 distinct colors
+float left_hue = 0;
+float right_hue = 0;
+
+//step = increase brightness
+byte curr_step_brightness = 0;
 
 class WheelSpeed {
   public:
@@ -100,7 +126,7 @@ WheelSpeed right_wheel = WheelSpeed(RIGHT_HALL_SENSOR);
 void drawSmoothedPixel(CRGB*, int, int, float, CRGB);
 byte mapBrightness(float);
 void update_speed_stats(float);
-void myTimerEvent();
+void recordData();
 CRGB scaleColor(CRGB, byte);
 
 void setup() {
@@ -113,7 +139,7 @@ void setup() {
   Blynk.begin(auth, ssid, pass);
   Serial.println("wifi connected");
 
-  timer.setInterval(1000L, myTimerEvent);
+  timer.setInterval(1000L, recordData);
 
   // pull up some pins
   pinMode(RIGHT_HALL_SENSOR, INPUT_PULLUP);
@@ -123,17 +149,11 @@ void setup() {
 }
 
 void loop() {
+  unsigned long curr_time = millis();
+  
   // check the wheel speeds
   left_wheel.update();
   right_wheel.update();
-
-  // check if the skate is being stepped on
-  left_stepped_on = (digitalRead(LEFT_PRESSURE_SENSOR) == LOW);
-  right_stepped_on = (digitalRead(RIGHT_PRESSURE_SENSOR) == LOW);
-
-  // update blynk stuff
-  Blynk.run();
-  timer.run();
 
   //update some statistics
   float left_wheel_speed = left_wheel.get_speed();
@@ -141,8 +161,65 @@ void loop() {
   float avg_speed = (left_wheel_speed + right_wheel_speed)/2.0;
   update_speed_stats(avg_speed);
 
+//  Serial.print("left speed: ");
+//  Serial.print(left_wheel_speed);
+//  Serial.print(" right speed: ");
+//  Serial.println(right_wheel_speed);
+
+  // update blynk stuff
+  Blynk.run();
+//  timer.run();
+
+//  if(avg_speed <= 0.01) {
+//    time_last_stopped
+//  }
+//  else {
+//    time_last_stopped = curr_time;
+//  }
+
+
+  // detect steps from pressure sensors
+  boolean left_stepped_off = false;
+  boolean left_stepped_on = false;
+  boolean right_stepped_off = false;
+  boolean right_stepped_on = false;
+
+  // debounce left skate
+  boolean new_left_stepping_on = (digitalRead(LEFT_PRESSURE_SENSOR) == LOW);
+  if(curr_time - left_last_pressure_time > pressure_debounce_time && left_stepping_on != new_left_stepping_on) {
+    left_last_pressure_time = curr_time;
+
+    left_stepped_off = (left_stepping_on == true && new_left_stepping_on == false);
+    left_stepped_on = (left_stepping_on == false && new_left_stepping_on == true);
+    
+    left_stepping_on = new_left_stepping_on;
+
+    if(left_stepped_on) {
+      total_steps++;
+      left_hue = byte(left_hue + hue_delta);
+      Serial.println("left stepped");
+    }
+  }
+
+  // debounce right skate
+  boolean new_right_stepping_on = (digitalRead(RIGHT_PRESSURE_SENSOR) == LOW);
+  if(curr_time - right_last_pressure_time > pressure_debounce_time && right_stepping_on != new_right_stepping_on) {
+    right_last_pressure_time = curr_time;
+
+    right_stepped_off = (right_stepping_on == true && new_right_stepping_on == false);
+    right_stepped_on = (right_stepping_on == false && new_right_stepping_on == true);
+    
+    right_stepping_on = new_right_stepping_on;
+
+    if(right_stepped_on) {
+      total_steps++;
+      right_hue = byte(right_hue + hue_delta);
+      Serial.println("right stepped");
+    }
+  }
+
   // draw patterns
-  if (millis() >= lastTickMillis + tickMillis) {
+  if (curr_time >= lastTickMillis + tickMillis) {
     lastTickMillis = millis();
 
     switch (pattern) {
@@ -150,7 +227,7 @@ void loop() {
       {
         position += (avg_speed * tickMillis) / inter_pixel_distance;
         if (position >= logical_light_distance) { position -= logical_light_distance; } // can't mod floats
-    
+        
         FastLED.clear(); // clear both strips
         
         // draw lights at intervals
@@ -162,7 +239,7 @@ void loop() {
           drawSmoothedPixel(right_leds, PIXEL_INNER_COUNT, PIXEL_COUNT, f + PIXEL_INNER_COUNT, color);
         }
       
-        break;
+      break;
       }
 
       case 2: // fixed rainbow
@@ -179,7 +256,7 @@ void loop() {
           left_leds[PIXEL_INNER_COUNT + i] = CHSV( h, 255, 255 );
           right_leds[PIXEL_INNER_COUNT + i] = CHSV( h, 255, 255 );
         }
-        break;
+      break;
       }
 
       case 3: // speed = brightness
@@ -188,9 +265,8 @@ void loop() {
         byte right_bright = byte(255 * _min(1.0f, avg_speed / bright_speed)); // later, get the correct aggregate speed
         fill_solid(left_leds, PIXEL_COUNT, scaleColor(color_p2, left_bright));
         fill_solid(right_leds, PIXEL_COUNT, scaleColor(color_p2, right_bright));
-  
-        break;
       }
+      break;
       
       case 4: // speed = hue
       {
@@ -202,13 +278,22 @@ void loop() {
 
         fill_solid(left_leds, PIXEL_COUNT, CHSV(left_h, 255, 255));
         fill_solid(right_leds, PIXEL_COUNT, CHSV(right_h, 255, 255));
-        break;
       }
+      break;
 
       case 5: // tail lights
       {
         FastLED.clear();
-        left_leds[PIXEL_COUNT - 1].r = 255; // running lights
+        for(int i = 1; i < 4; i++) {
+          left_leds[PIXEL_INNER_COUNT-i].r = 255; // headlight
+          left_leds[PIXEL_INNER_COUNT-i].g = 255; // headlight
+          left_leds[PIXEL_INNER_COUNT-i].b = 255; // headlight
+          right_leds[PIXEL_INNER_COUNT-i].r = 255; // headlight
+          right_leds[PIXEL_INNER_COUNT-i].g = 255; // headlight
+          right_leds[PIXEL_INNER_COUNT-i].b = 255; // headlight
+        }
+
+        left_leds[PIXEL_COUNT - 1].r = 255; // running light
         right_leds[PIXEL_COUNT - 1].r = 255; // running light
   
         int curr_speed = avg_speed;
@@ -222,8 +307,25 @@ void loop() {
         }
 
         last_speed = curr_speed;
-        break;
       }
+      break;
+
+      case 6: // lights on when pressure
+      {
+        byte left_color = 255 * left_stepped_on;
+        byte right_color = 255 * right_stepped_on;
+
+        fill_solid(left_leds, PIXEL_COUNT, CRGB(0, 0, left_color));
+        fill_solid(right_leds, PIXEL_COUNT, CRGB(0, 0, right_color));
+      }
+      break;
+
+      case 7: // footstep hue
+      {
+        fill_solid(left_leds, PIXEL_COUNT, CHSV( left_hue, 255, 255 ));
+        fill_solid(right_leds, PIXEL_COUNT, CHSV( right_hue, 255, 255 ));
+      }
+      break;
 
       case 9: // debug
       {
@@ -231,16 +333,35 @@ void loop() {
         byte left_bright = byte(255 * _min(1.0f, left_wheel_speed / bright_speed));
         byte right_bright = byte(255 * _min(1.0f, right_wheel_speed / bright_speed));
         
-        byte g = 0;
+        byte left_g = 0;
         if(left_stepped_on)
-          g = 255;
+          left_g = 255;
+
+        byte right_g = 0;
+        if(left_stepped_on)
+          right_g = 255;
 
         byte b = 0;
 
-        fill_solid(left_leds, PIXEL_COUNT, CRGB(left_bright, g, b));
-        fill_solid(right_leds, PIXEL_COUNT, CRGB(right_bright, g, b));
-        break;
+        fill_solid(left_leds, PIXEL_COUNT, CRGB(left_bright, left_g, b));
+        fill_solid(right_leds, PIXEL_COUNT, CRGB(right_bright, right_g, b));
       }
+      break;
+
+      case 10: // police
+      {
+        FastLED.clear();
+        float flashes_per_second = 2;
+        if(long(millis()/(1000/flashes_per_second)) % 2 == 0) {
+          fill_solid(left_leds, PIXEL_COUNT, CRGB(255, 0, 0));
+          fill_solid(right_leds, PIXEL_COUNT, CRGB(0, 0, 255));
+        }
+        else {
+          fill_solid(left_leds, PIXEL_COUNT, CRGB(0, 0, 255));
+          fill_solid(right_leds, PIXEL_COUNT, CRGB(255, 0, 0));
+        }
+      }
+      break;
     } //end of switch case
     
     FastLED.show();
@@ -334,6 +455,7 @@ byte mapBrightness(float input) {
  * V4 - average speed
  * V5 - left skate speed
  * V6 - right skate speed
+ * V7 - step counter
  */
 
 //upload stats button
@@ -379,6 +501,9 @@ BLYNK_WRITE(V1) {
     case 9:
       Serial.println("pattern: debug: red=speed, green=pressure");
       break;
+    case 10:
+      Serial.println("pattern: police lights");
+      break;
     default:
       Serial.println("pattern: Unknown pattern code (defaulting to fixed lights)");
       pattern = 1;
@@ -386,7 +511,40 @@ BLYNK_WRITE(V1) {
 }
 
 //blynk timer called every 1 second
-void myTimerEvent()
+void recordData()
+{
+  float left_speed = left_wheel.get_speed();
+  float right_speed = right_wheel.get_speed();
+
+  left_speeds[speed_index] = left_speed;
+  right_speeds[speed_index] = right_speed;
+
+  speed_index = (speed_index+1) % SPEED_BUFFER_SIZE; //note: it shouldn't ever need to wrap around
+
+  //print some debug information
+  Serial.print("left: ");
+  if(left_stepping_on)
+    Serial.print("stepping ");
+  else
+    Serial.print("not stepping ");
+  Serial.print("right: ");
+  if(right_stepping_on)
+    Serial.print("stepping ");
+  else
+    Serial.print("not stepping ");
+  Serial.print(" left: ");
+  Serial.print(left_speed);
+  Serial.print(" m/s | ");
+  Serial.print("right: ");
+  Serial.print(right_speed);
+  Serial.print(" m/s | ");
+  Serial.print("avg: ");
+  Serial.print(avg_speed);
+  Serial.println(" m/s");
+}
+
+//called only when the skate stops moving so we don't interfer with the timing of the patterns
+void sendDataToBlynk()
 {
   //max speed
   Blynk.virtualWrite(V2, max_speed);
@@ -394,25 +552,30 @@ void myTimerEvent()
   //total time spent skating
   Blynk.virtualWrite(V3, millis() / 1000);
 
-  
+  //total steps
+  Blynk.virtualWrite(V7, total_steps);
+
+  //dump speeds
+  for(int i = 0; i <= speed_index; i++) {
+    float left_speed = left_speeds[i];
+    float right_speed = left_speeds[i];
+    float avg_of_both_skates = (left_speed+right_speed)/2.0;
+    Blynk.virtualWrite(V5, left_speed);
+    Blynk.virtualWrite(V6, right_speed);
+    Blynk.virtualWrite(V4, avg_of_both_skates);
+  }
+
+//  //left speed
 //  float left_speed = left_wheel.get_speed();
-  float left_speed = 0.0;
-  Blynk.virtualWrite(V5, left_speed);
-  
-  float right_speed = right_wheel.get_speed();
-  Blynk.virtualWrite(V6, right_speed);
-
-  float avg_of_both_skates = (left_speed + right_speed)/2.0;
-  Blynk.virtualWrite(V4, avg_of_both_skates);
-
-  Serial.print("left speed: ");
-  Serial.print(left_speed);
-  Serial.print(" ");
-  Serial.print("right speed: ");
-  Serial.print(right_speed);
-  Serial.print(" ");
-  Serial.print("avg speed: ");
-  Serial.println(avg_speed);
+//  Blynk.virtualWrite(V5, left_speed);
+//  
+//  //right speed
+//  float right_speed = right_wheel.get_speed();
+//  Blynk.virtualWrite(V6, right_speed);
+//
+//  //avg speed
+//  float avg_of_both_skates = (left_speed + right_speed)/2.0;
+//  Blynk.virtualWrite(V4, avg_of_both_skates);
 }
 
 void update_speed_stats(float speed) {
