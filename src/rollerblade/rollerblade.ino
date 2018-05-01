@@ -251,11 +251,11 @@ void loop() {
 
       case 2: // fixed rainbow
       {
-        hue_position += (avg_speed * tickMillis) / inter_pixel_distance;
+        hue_position -= (avg_speed * tickMillis) * hue_per_meter / 1000;
         if (hue_position >= 255) { position -= 255; } // can't mod floats
         
         for (int i = 0; i < PIXEL_COUNT - PIXEL_INNER_COUNT; i++) {
-          byte h = byte(hue_position + i * hue_per_pixel);
+          byte h = byte(hue_position - i * hue_per_pixel);
           if (i < PIXEL_INNER_COUNT) {
             left_leds[PIXEL_INNER_COUNT - i - 1] = CHSV( h, 255, 255 );
             right_leds[PIXEL_INNER_COUNT - i - 1] = CHSV( h, 255, 255 );
