@@ -16,6 +16,10 @@ int maxCalls = 100;   // Maximum number of times the Choreo should be executed
 boolean should_execute_temboo_task = false;
 WiFiClient client;
 
+//to be able to disable blynk when you want
+//#include <PinChangeInterrupt.h>
+
+
 //makerboard pins
 //#define LEFT_PRESSURE_SENSOR 4
 //#define RIGHT_PRESSURE_SENSOR 13
@@ -35,9 +39,12 @@ WiFiClient client;
 #define RIGHT_NEOP 5
 
 //button variables
-boolean enable_blynk = true;
-unsigned long last_button_time = 0;
-byte button_prev_state = HIGH;
+volatile boolean interrupts_attached = false;
+volatile boolean enable_blynk = true;
+volatile boolean can_toggle_blynk = true;
+volatile unsigned long last_time_button_pressed = 0;
+volatile unsigned long last_time_button_released = 0;
+byte button_prev_state = 0;
 
 //pressure variables
 unsigned long left_last_pressure_time = 0;
@@ -56,14 +63,8 @@ BlynkTimer timer;
 
 // Your WiFi credentials.
 // Set password to "" for open networks.
-//char ssid[] = "CS390N";
-//char pass[] = "internetofthings";
-char ssid[] = "NETGEAR50";
-char pass[] = "magicalfire545";
-//char ssid[] = "Chris iPhone";
-//char pass[] = "doDoubleg";
-//char ssid[] = "Alex V30";
-//char pass[] = "snoopdoge";
+char ssid[] = "CS390N";
+char pass[] = "internetofthings";
 
 
 // variables about physical entities
@@ -163,27 +164,30 @@ void update_speed_stats(float);
 void recordData();
 CRGB scaleColor(CRGB, byte);
 float compute_aggregate_wheel_speed(float, float);
+void button_pressed();
+void button_released();
+void connect_to_wifi();
+
 
 void setup() {
   Serial.begin(115200);
 
+  button_prev_state = digitalRead(BUTTON_PIN);
+  
   FastLED.addLeds<NEOPIXEL, LEFT_NEOP>(left_leds, PIXEL_COUNT);
   FastLED.addLeds<NEOPIXEL, RIGHT_NEOP>(right_leds, PIXEL_COUNT);
-
-  tone(BUZZER_PIN, 6000);
-  delay(200);
-  tone(BUZZER_PIN, 8000);
-  delay(200);
-  tone(BUZZER_PIN, 0);
 
   //set color of neopixel strips for debugging purposes
   fill_solid(left_leds, PIXEL_COUNT, CRGB(0, 255, 0));
   fill_solid(right_leds, PIXEL_COUNT, CRGB(0, 255, 0));
   FastLED.show();
 
-  Serial.println("trying to connect to wifi");
-  Blynk.begin(auth, ssid, pass);
-  Serial.println("wifi connected");
+  /*
+   * prepare for blynk connection
+   * 
+   * there's a 4 second grace period where if the button is held down for >1 sec it will not try to connect to wifi
+   */
+  connect_to_wifi();
 
   timer.setInterval(1000L, recordData);
 
@@ -212,50 +216,66 @@ void loop() {
 //  Serial.print(" right speed: ");
 //  Serial.println(right_wheel_speed);
 
+  //detach the interupt after the wifi connection part is done if need be
+  if(interrupts_attached) {
+    detachInterrupt(BUTTON_PIN);
+    interrupts_attached = false;
+  }
+
   //hold physical button for 3 seconds to enable non-wifi mode
   //cycle demos by clicking physical button on chip
   byte button_curr_state = digitalRead(BUTTON_PIN);
-  if(button_curr_state==HIGH && button_prev_state==LOW) {
-    if(curr_time > last_button_time+100) {
 
-      //hold button to toggle blynk
-      if(curr_time-last_button_time >= 3000) {
-        enable_blynk = !enable_blynk;
-
-        if(enable_blynk) {
-          tone(BUZZER_PIN, 6000);
-          delay(200);
-          tone(BUZZER_PIN, 8000);
-          delay(200);
-          tone(BUZZER_PIN, 0);
-        }
-        else {
-          tone(BUZZER_PIN, 8000);
-          delay(200);
-          tone(BUZZER_PIN, 6000);
-          delay(200);
-          tone(BUZZER_PIN, 0);
-        }
-      }
-
+  //if the button was pressed
+  if(button_curr_state==LOW && button_prev_state==HIGH && curr_time > last_time_button_pressed+100) {
+    last_time_button_pressed = curr_time;
+  }
+  //if the buttom was released
+  else if(button_curr_state==HIGH && button_prev_state==LOW && curr_time > last_time_button_released+100) {
+    can_toggle_blynk = true;
+    
+    if(!enable_blynk) {
       //tap button to change demos
-      if(!enable_blynk) {
-        //if blynk is disabled, clicking the button changes demos
-        pattern = (pattern+1) % 11;
-        if(pattern == 0)
-          pattern++;
-      }
-
-
-      last_button_time = curr_time;
+      pattern = (pattern+1) % 11;
+      if(pattern == 0)
+        pattern++;
     }
+    
+    last_time_button_released = curr_time;
   }
   button_prev_state = button_curr_state;
+
+
+  //hold button to toggle blynk
+  if(button_curr_state==LOW && curr_time-last_time_button_pressed >= 2000 && can_toggle_blynk) {
+    enable_blynk = !enable_blynk;
+    can_toggle_blynk = false;
+
+    if(enable_blynk) {
+      tone(BUZZER_PIN, 4000);
+      delay(200);
+      tone(BUZZER_PIN, 5000);
+      delay(200);
+      tone(BUZZER_PIN, 0);
+    }
+    else {
+      tone(BUZZER_PIN, 5000);
+      delay(200);
+      tone(BUZZER_PIN, 4000);
+      delay(200);
+      tone(BUZZER_PIN, 0);
+    }
+
+    connect_to_wifi();
+  }
+
+  
 
   //blynk can be disabled for performance purposes
   if(enable_blynk) {
     // update blynk stuff
     Blynk.run();
+//    timer.run();
 
     // do temboo stuff if needed
     if(should_execute_temboo_task) {
@@ -795,5 +815,39 @@ void write_to_spreadsheet(String avg_speed_string, String max_speed_string, Stri
     AppendToSpreadsheetChoreo.close();
   }
   Serial.println("");
+}
+
+//called via interrupt on the button pin
+void button_pressed() {
+   last_time_button_pressed = millis();
+}
+
+//called via interrupt on the button pin
+void button_released() {
+  last_time_button_released = millis();
+  if(last_time_button_released-last_time_button_pressed > 1000) {
+    //disable blynk
+    if(can_toggle_blynk) {
+      enable_blynk = !enable_blynk;
+      can_toggle_blynk = false;
+    }
+  }
+}
+
+void connect_to_wifi() {
+  delay(100);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), button_pressed, FALLING);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), button_released, RISING);
+  interrupts_attached = true;
+  delay(4000);
+
+  if(enable_blynk) {
+    Serial.println("trying to connect to wifi");
+    Blynk.begin(auth, ssid, pass);
+    Serial.println("wifi connected");
+  }
+  else {
+    Serial.println("Blynk disabled");
+  }
 }
 
