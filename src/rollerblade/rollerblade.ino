@@ -25,12 +25,19 @@ WiFiClient client;
 //#define RIGHT_NEOP 14
 
 //ESP8266 pins
+#define BUTTON_PIN 0
+#define BUZZER_PIN 13
 #define LEFT_PRESSURE_SENSOR 2
 #define RIGHT_PRESSURE_SENSOR 14
 #define LEFT_HALL_SENSOR 12
 #define RIGHT_HALL_SENSOR 4
 #define LEFT_NEOP 15
 #define RIGHT_NEOP 5
+
+//button variables
+boolean enable_blynk = true;
+unsigned long last_button_time = 0;
+byte button_prev_state = HIGH;
 
 //pressure variables
 unsigned long left_last_pressure_time = 0;
@@ -53,6 +60,10 @@ BlynkTimer timer;
 //char pass[] = "internetofthings";
 char ssid[] = "NETGEAR50";
 char pass[] = "magicalfire545";
+//char ssid[] = "Chris iPhone";
+//char pass[] = "doDoubleg";
+//char ssid[] = "Alex V30";
+//char pass[] = "snoopdoge";
 
 
 // variables about physical entities
@@ -86,14 +97,14 @@ CRGB right_leds[PIXEL_COUNT];
 
 // encodes id of current pattern
 // to view list of IDs, look at BLYNK_WRITE(V1)
-byte pattern = 1;
+byte pattern = 2;
 
 // variables for fixed light speed-dependent pattern
 CRGB color = 0x1144ff;
 
 float position = 0;
 //float inter_light_distance = inter_pixel_distance * PIXEL_COUNT / 2; // mm - distance for the logical lights to display
-float inter_light_distance = 1000; // mm - distance for the logical lights to display
+float inter_light_distance = 500; // mm - distance for the logical lights to display
 float logical_light_distance = inter_light_distance / inter_pixel_distance; // what the program uses to draw the lights
 
 // fixed rainbow
@@ -117,7 +128,8 @@ int brake_trail_time = 500; // ms - time to leave lights on after stopped slowin
 unsigned long last_brake_time = 0;
 
 // footstep hue
-byte hue_delta = 51; //51->5 distinct colors
+//byte hue_delta = 51; //51->5 distinct colors
+byte hue_delta = 17; //51->5 distinct colors, 17->15
 float left_hue = 0;
 float right_hue = 0;
 
@@ -150,13 +162,24 @@ byte mapBrightness(float);
 void update_speed_stats(float);
 void recordData();
 CRGB scaleColor(CRGB, byte);
-float compute_aggregate_speed(float, float);
+float compute_aggregate_wheel_speed(float, float);
 
 void setup() {
   Serial.begin(115200);
 
   FastLED.addLeds<NEOPIXEL, LEFT_NEOP>(left_leds, PIXEL_COUNT);
   FastLED.addLeds<NEOPIXEL, RIGHT_NEOP>(right_leds, PIXEL_COUNT);
+
+  tone(BUZZER_PIN, 6000);
+  delay(200);
+  tone(BUZZER_PIN, 8000);
+  delay(200);
+  tone(BUZZER_PIN, 0);
+
+  //set color of neopixel strips for debugging purposes
+  fill_solid(left_leds, PIXEL_COUNT, CRGB(0, 255, 0));
+  fill_solid(right_leds, PIXEL_COUNT, CRGB(0, 255, 0));
+  FastLED.show();
 
   Serial.println("trying to connect to wifi");
   Blynk.begin(auth, ssid, pass);
@@ -181,24 +204,67 @@ void loop() {
   //update some statistics
   float left_wheel_speed = left_wheel.get_speed();
   float right_wheel_speed = right_wheel.get_speed();
-  float aggregate_speed = compute_aggregate_speed(left_wheel_speed, right_wheel_speed);
-  update_speed_stats(aggregate_speed);
+  float aggregate_wheel_speed = compute_aggregate_wheel_speed(left_wheel_speed, right_wheel_speed);
+  update_speed_stats(aggregate_wheel_speed);
 
 //  Serial.print("left speed: ");
 //  Serial.print(left_wheel_speed);
 //  Serial.print(" right speed: ");
 //  Serial.println(right_wheel_speed);
 
-  // update blynk stuff
-  Blynk.run();
-//  timer.run();
+  //hold physical button for 3 seconds to enable non-wifi mode
+  //cycle demos by clicking physical button on chip
+  byte button_curr_state = digitalRead(BUTTON_PIN);
+  if(button_curr_state==HIGH && button_prev_state==LOW) {
+    if(curr_time > last_button_time+100) {
 
-  // do temboo stuff if needed
-  if(should_execute_temboo_task) {
-    should_execute_temboo_task = false;
+      //hold button to toggle blynk
+      if(curr_time-last_button_time >= 3000) {
+        enable_blynk = !enable_blynk;
 
-    write_to_spreadsheet(String(avg_speed), String(max_speed), String(total_steps), String(millis()/1000));
+        if(enable_blynk) {
+          tone(BUZZER_PIN, 6000);
+          delay(200);
+          tone(BUZZER_PIN, 8000);
+          delay(200);
+          tone(BUZZER_PIN, 0);
+        }
+        else {
+          tone(BUZZER_PIN, 8000);
+          delay(200);
+          tone(BUZZER_PIN, 6000);
+          delay(200);
+          tone(BUZZER_PIN, 0);
+        }
+      }
+
+      //tap button to change demos
+      if(!enable_blynk) {
+        //if blynk is disabled, clicking the button changes demos
+        pattern = (pattern+1) % 11;
+        if(pattern == 0)
+          pattern++;
+      }
+
+
+      last_button_time = curr_time;
+    }
   }
+  button_prev_state = button_curr_state;
+
+  //blynk can be disabled for performance purposes
+  if(enable_blynk) {
+    // update blynk stuff
+    Blynk.run();
+
+    // do temboo stuff if needed
+    if(should_execute_temboo_task) {
+      should_execute_temboo_task = false;
+  
+      write_to_spreadsheet(String(avg_speed), String(max_speed), String(total_steps), String(millis()/1000));
+    }
+  }
+
 
   /*
    * Only dump the data to blynk if:
@@ -206,7 +272,7 @@ void loop() {
    * 2. the skates have been stopped for a little bit of time
    * 3. the data hasn't been dumped for a bit of time
    */
-  if(aggregate_speed <= 0.01) {
+  if(aggregate_wheel_speed <= 0.01) {
     if(curr_time-time_last_stopped > TIME_STOPPED_TIL_DATA_DUMP) {
       if(curr_time-time_last_dumped > MIN_TIME_TIL_DATA_DUMP) {
         time_last_dumped = curr_time;
@@ -268,7 +334,7 @@ void loop() {
     switch (pattern) {
       case 1: // fixed light
       {
-        position += (aggregate_speed * tickMillis) / inter_pixel_distance;
+        position += (aggregate_wheel_speed * tickMillis) / inter_pixel_distance;
         if (position >= logical_light_distance) { position -= logical_light_distance; } // can't mod floats
         
         FastLED.clear(); // clear both strips
@@ -287,7 +353,7 @@ void loop() {
 
       case 2: // fixed rainbow
       {
-        hue_position -= (aggregate_speed * tickMillis) * hue_per_meter / 1000;
+        hue_position -= (aggregate_wheel_speed * tickMillis) * hue_per_meter / 1000;
         if (hue_position >= 255) { position -= 255; } // can't mod floats
         
         for (int i = 0; i < PIXEL_COUNT - PIXEL_INNER_COUNT; i++) {
@@ -308,6 +374,11 @@ void loop() {
         byte right_bright = byte(255 * _min(1.0f, right_wheel_speed / bright_speed)); // later, get the correct aggregate speed
         fill_solid(left_leds, PIXEL_COUNT, scaleColor(color_p2, left_bright));
         fill_solid(right_leds, PIXEL_COUNT, scaleColor(color_p2, right_bright));
+
+//        unsigned int minFreq = 100;
+//        unsigned int maxFreq = 2000;
+//        unsigned int freq = minFreq+(maxFreq-minFreq)*aggregate_wheel_speed/3.0;
+//        tone(BUZZER_PIN, freq, tickMillis);
       }
       break;
       
@@ -339,10 +410,8 @@ void loop() {
         left_leds[PIXEL_COUNT - 1].r = 64; // running light
         right_leds[PIXEL_COUNT - 1].r = 64; // running light
   
-        float curr_speed = aggregate_speed;
+        float curr_speed = aggregate_wheel_speed;
 
-        Serial.println(last_speed - curr_speed);
-        
         if (last_speed - curr_speed > decel_threshold || curr_time <= last_brake_time + brake_trail_time) {
           if (last_speed - curr_speed > decel_threshold) {
             last_brake_time = curr_time;
@@ -423,6 +492,11 @@ void loop() {
         }
       }
       break;
+
+      case 11: // hybrid step brightness
+      {
+        
+      }
     } //end of switch case
     
     FastLED.show();
@@ -578,7 +652,7 @@ void recordData()
 {
   float left_speed = left_wheel.get_speed();
   float right_speed = right_wheel.get_speed();
-  float aggregate_speed = compute_aggregate_speed(left_speed, right_speed);
+  float aggregate_wheel_speed = compute_aggregate_wheel_speed(left_speed, right_speed);
 
   left_speeds[speed_index] = left_speed;
   right_speeds[speed_index] = right_speed;
@@ -603,22 +677,22 @@ void recordData()
   Serial.print(right_speed);
   Serial.print(" m/s | ");
   Serial.print("avg: ");
-  Serial.print(aggregate_speed);
+  Serial.print(aggregate_wheel_speed);
   Serial.println(" m/s");
 }
 
-float compute_aggregate_speed(float left_wheel_speed, float right_wheel_speed) {
-  float aggregate_speed = 0;
+float compute_aggregate_wheel_speed(float left_wheel_speed, float right_wheel_speed) {
+  float aggregate_wheel_speed = 0;
   if (left_stepping_on && right_stepping_on) {
-    aggregate_speed = max(left_wheel_speed, right_wheel_speed);
+    aggregate_wheel_speed = max(left_wheel_speed, right_wheel_speed);
   } else if (left_stepping_on) {
-    aggregate_speed = left_wheel_speed;
+    aggregate_wheel_speed = left_wheel_speed;
   } else if (right_stepping_on) {
-    aggregate_speed = right_wheel_speed;
+    aggregate_wheel_speed = right_wheel_speed;
   } else { // no feet are on the ground
-    aggregate_speed = (left_wheel_speed + right_wheel_speed) / 2;
+    aggregate_wheel_speed = (left_wheel_speed + right_wheel_speed) / 2;
   }
-  return aggregate_speed;
+  return aggregate_wheel_speed;
 }
 
 //called only when the skate stops moving so we don't interfer with the timing of the patterns
